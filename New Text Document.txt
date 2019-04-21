@@ -1,0 +1,7 @@
+https://gombru.github.io/2018/05/23/cross_entropy_loss/
+
+https://www.ics.uci.edu/~pjsadows/notes.pdf
+
+https://pytorch.org/docs/stable/nn.html
+
+https://pytorch.org/docs/stable/torch.html

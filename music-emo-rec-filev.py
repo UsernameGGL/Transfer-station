@@ -5,13 +5,15 @@ import torch.nn.functional as F
 import csv
 import time
 import _thread
+import statistics
 from torch.utils.data import Dataset, DataLoader
 # from torchvision import transforms
 # from torchvision.utils import save_image
 
 
 # train_rate = 0.8
-train_slice_num = 2223  # 用来训练的曲子数
+train_slice_num = 200  # 用来训练的曲子数
+total_slice_num = train_slice_num + 20
 pic_len = 256           # 图片长度
 batch_size = 100
 epoch_num = 1
@@ -82,6 +84,7 @@ def transfer_data():
     global train_data_has_refreshed
     global test_data_has_refreshed
     global slice_num
+    global total_slice_num
     # 读入音频数据，计算数据行数
     input_file = open('../data/cal500/prodAudios_v2.txt', 'r')
     input_lines = input_file.readlines()
@@ -99,6 +102,8 @@ def transfer_data():
         while sample_start + sample_len <= line_len:
             time_data = line[sample_start: sample_start + sample_len]
             freq_data = abs(np.fft.fft(time_data)/sample_len)
+            # freq_data[0] = statistics.mean(freq_data[1:])
+            # #######################################here
             time_data = np.array(time_data).reshape(pic_len, pic_len)
             freq_data = np.array(freq_data).reshape(pic_len, pic_len)
             sample_start += interval
@@ -119,6 +124,8 @@ def transfer_data():
         if slice_num >= train_slice_num:
             train_or_test = 'test'
             train_data_is_left = False
+        if slice_num >= total_slice_num:
+            break
     input_file.close()    
     test_data_is_left = False
 
@@ -152,10 +159,10 @@ class Net(nn.Module):
         self.conv4 = nn.Conv2d(16, 8, 5)
         linear_len = int(((pic_len - 4) / 2 - 4) / 2 - 6 - 4)
         self.linear_len = linear_len
-        self.fc1 = nn.Linear(8 * linear_len * linear_len, 5000)
-        self.fc2 = nn.Linear(5000, 1000)
-        self.fc3 = nn.Linear(1000, 200)
-        self.fc4 = nn.Linear(200, 18)
+        self.fc1 = nn.Linear(8 * linear_len * linear_len, 500)
+        self.fc2 = nn.Linear(500, 100)
+        self.fc3 = nn.Linear(100, 20)
+        self.fc4 = nn.Linear(20, 18)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
@@ -166,7 +173,7 @@ class Net(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
-        x = F.relu(self.fc4(x))
+        x = F.softmax(self.fc4(x))
         return x
 
 
@@ -175,8 +182,9 @@ net = Net()
 #     net = nn.DataParallel(net)
 net.to(device)
 
-#criterion = nn.CrossEntropyLoss()
-criterion = nn.BCEWithLogitsLoss()
+# criterion = nn.CrossEntropyLoss()
+# criterion = nn.BCEWithLogitsLoss()
+criterion = nn.BCELoss()  # ##################################################### here
 optimizer = torch.optim.SGD(net.parameters(), lr=0.00001, momentum=0.9)
 
 def train():
@@ -223,6 +231,8 @@ def train():
                 outputs = net(inputs)
                 # outputs = torch.round(outputs)
                 loss = criterion(outputs, labels)
+                # print(outputs)
+                # print(loss)
                 loss.backward()
                 optimizer.step()
 
@@ -231,20 +241,30 @@ def train():
                 if i % 10 == 9:    # print every 2000 mini-batches
                     print('[%d, %5d] loss: %.3f' %
                           (epoch + 1, i + 1, running_loss / 10))
+                    loss_state_cnt += 1
+                    if loss_state_cnt == 2:
+                        # ####################################################here
+                        optimizer.param_groups[0]['lr'] *= 0.1
+                    elif loss_state_cnt == 6:
+                        # ####################################################here
+                        optimizer.param_groups[0]['lr'] *= 0.1
                     # with open('record', 'a') as f:
                     #     f.write('[%d, %5d] loss: %.3f\n\n' %
                     #         (epoch + 1, i + 1, running_loss / 2000))
-                    if last_loss <= running_loss:
-                        loss_state_cnt += 1
-                        if loss_state_cnt >= 10:
-                            optimizer.param_groups[0]['lr'] *= 0.1
-                            loss_state_cnt = 0
-                            train_is_needed_cnt += 1
-                            if train_is_needed_cnt >= 10:
-                                slice_num = train_slice_num
-                    else:
-                        train_is_needed_cnt = 0
-                    last_loss = running_loss
+                    # if last_loss <= running_loss:
+                    #     loss_state_cnt += 1
+                    #     if loss_state_cnt >= 10:
+                    #         optimizer.param_groups[0]['lr'] *= 0.1
+                    #         loss_state_cnt = 0
+                    #         train_is_needed_cnt += 1
+                    #         if train_is_needed_cnt >= 10:
+                    #             slice_num = train_slice_num
+                    # else:
+                    #     train_is_needed_cnt = 0
+                    # last_loss = running_loss
+                    # if running_loss < 7:
+                    #     slice_num = train_slice_num - 1
+                    #     print('test')
                     running_loss = 0.0
 
 
@@ -284,13 +304,18 @@ def test():
                 images = images.to(device)
                 labels = labels.to(device)
                 outputs = net(images)
-                outputs = sigmoid(outputs)
+                # print(1, outputs)
+                # ####################################################here
+                # outputs = sigmoid(outputs)
+                # print(2, outputs)
                 outputs = torch.round(outputs)
+                # print(3, outputs)
                 #labels = labels.float()
                 total += labels.size(0)
                 ########################################
                 outputs[outputs < 0] = 0
                 outputs[outputs > 1] = 1
+                # print(4, outputs)
                 ########################################
                 correct += (outputs.data == labels).sum().item()
                 # loss += abs(outputs.data - labels).sum().item()
